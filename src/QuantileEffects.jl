@@ -9,7 +9,7 @@ function foo(mu = 1., sigma = 2.)
     E = expectation(d)
     return E(x -> cos(x))
 end
-
+export DataFrame, load
 export foo
 
 function cdf(y, P, YS)
@@ -404,7 +404,18 @@ function cic_low(f00, f01, f10, f11, qq, YS, YS01)
     return est
 end
 
-function cic(df,trat_var,post_var,pre_var,outcome, qq, standard_error, bootstrap,cluster,sub_sample_factor=1)
+
+function cic(df,
+    trat_var::AbstractString,
+    post_var::AbstractString,
+    pre_var::AbstractString,
+    outcome::AbstractString,
+    qq::AbstractVector{<:Real},
+    standard_error::Integer,
+    bootstrap::Bool,
+    bootstrap_reps::Integer,
+    cluster::Union{AbstractString,Missing};
+    sub_sample_factor::Float64 = 1.0)
 
     # INFORMAÇÕES GERAIS
     # Este programa calcula quatro conjuntos de estimativas CIC
@@ -517,21 +528,31 @@ function cic(df,trat_var,post_var,pre_var,outcome, qq, standard_error, bootstrap
         #boot = zeros(size(est))
         Nboot = bootstrap
         boot_est = zeros(Nboot,length(est_con))
-        #boot_est2 = zeros(Nboot,length(est_con))
-        #boot_est3 = zeros(Nboot,length(est_con))
-        #boot_est4 = zeros(Nboot,length(est_con))
+        boot_est2 = zeros(Nboot,length(est_con))
+        boot_est3 = zeros(Nboot,length(est_con))
+        boot_est4 = zeros(Nboot,length(est_con))
         #N00 = length(Y00)
         #N01 = length(Y01)
         #N10 = length(Y10)
         #N11 = length(Y11)
-        clusters = unique(df[!, Symbol(cluster)])
+        n = nrow(df2)
+        if cluster === missing
+            clusters = missing
+        else
+            clusters = unique(df2[!, Symbol(cluster)])
+        end
         for i in 1:Nboot
-            println(i)
-            indices = rand(1:length(clusters), length(clusters))
-            aa = clusters[indices]
-            sampled_clusters_set = Set(aa)
-            boot_df = df[in.(df[!, Symbol(cluster)], Ref(sampled_clusters_set)), :]
-            boot_df2=boot_df[.!ismissing.(boot_df[!,Symbol(trat_var)]) .& .!ismissing.(boot_df[!,Symbol(pre_var)]) .& .!ismissing.(boot_df[!,Symbol(post_var)]) .& .!ismissing.(boot_df[!,Symbol(outcome)]),:]
+            println("rep $i")
+            if cluster === missing
+                idx    = rand(1:n, n)           # sample rows with replacement
+                boot_df = df2[idx, :]
+            else 
+                indices = rand(1:length(clusters), length(clusters))
+                aa = clusters[indices]
+                sampled_clusters_set = Set(aa)
+                boot_df = df2[in.(df2[!, Symbol(cluster)], Ref(sampled_clusters_set)), :]
+            end
+            boot_df2=boot_df
             subsample_indices = sample(1:size(boot_df2, 1), Int(floor(size(boot_df2, 1) * sub_sample_factor)), replace=false)
             if sub_sample_factor ==1 
                 boot_df3=boot_df2
@@ -562,15 +583,15 @@ function cic(df,trat_var,post_var,pre_var,outcome, qq, standard_error, bootstrap
         #se_boot = std(boot_est, dims=1)
         #se = vcat(se, se_boot)
         # Inicializar a matriz 3D para armazenar todas as estimativas
-        n_repetitions = size(boot_est1, 1)  # Número de repetições de bootstrap
-        n_estimations = size(boot_est1, 2)  # Número de estimativas por repetição
+        n_repetitions = size(boot_est, 1)  # Número de repetições de bootstrap
+        n_estimations = size(boot_est, 2)  # Número de estimativas por repetição
         n_functions = 4                     # Número de funções diferentes (cic_con, cic_dci, cic_low, cic_upp)
 
         # Cria uma matriz 3D para armazenar todas as estimativas
-        #boot_estimates = zeros(n_repetitions, n_estimations, n_functions)
+        boot_estimates = zeros(n_repetitions, n_estimations, n_functions)
 
         # Armazenar as estimativas em diferentes "fatias" da 3ª dimensão
-        boot_estimates[:, :, 1] = boot_est1
+        boot_estimates[:, :, 1] = boot_est
         boot_estimates[:, :, 2] = boot_est2
         boot_estimates[:, :, 3] = boot_est3
         boot_estimates[:, :, 4] = boot_est4
