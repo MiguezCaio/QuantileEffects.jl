@@ -526,13 +526,29 @@ function cic(df,trat_var,post_var,pre_var,outcome, qq, standard_error,bootstrap 
         #N01 = length(Y01)
         #N10 = length(Y10)
         #N11 = length(Y11)
-        clusters = unique(df[!, Symbol(cluster)])
+        n = nrow(df)
+        if cluster === missing
+            clusters = missing
+        else
+            clusters = unique(df[!, Symbol(cluster)])
+            # —— STANDARD (observation‐level) BOOTSTRAP ——
+            for i in 1:Nboot
+                idx    = rand(1:n, n)           # sample rows with replacement
+                boot_df = df[idx, :]
+                boot_est[i] = est_fun(boot_df)
+            end
+        end
         for i in 1:Nboot
-            println(i)
-            indices = rand(1:length(clusters), length(clusters))
-            aa = clusters[indices]
-            sampled_clusters_set = Set(aa)
-            boot_df = df[in.(df[!, Symbol(cluster)], Ref(sampled_clusters_set)), :]
+            println("rep $i")
+            if cluster === missing
+                idx    = rand(1:n, n)           # sample rows with replacement
+                boot_df = df[idx, :]
+            else 
+                indices = rand(1:length(clusters), length(clusters))
+                aa = clusters[indices]
+                sampled_clusters_set = Set(aa)
+                boot_df = df[in.(df[!, Symbol(cluster)], Ref(sampled_clusters_set)), :]
+            end
             boot_df2=boot_df[.!ismissing.(boot_df[!,Symbol(trat_var)]) .& .!ismissing.(boot_df[!,Symbol(pre_var)]) .& .!ismissing.(boot_df[!,Symbol(post_var)]) .& .!ismissing.(boot_df[!,Symbol(outcome)]),:]
             subsample_indices = sample(1:size(boot_df2, 1), Int(floor(size(boot_df2, 1) * sub_sample_factor)), replace=false)
             if sub_sample_factor ==1 
