@@ -15,7 +15,6 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StatFiles = "1463e38c-9381-5320-bcd4-4134955f093a"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
-StyledStrings = "f489334b-da3d-4c2e-b8f0-e476e12c162b"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
@@ -30,7 +29,6 @@ Random = "1.11.0"
 StatFiles = "0.8.0"
 Statistics = "1.11.1"
 StatsBase = "0.34.4"
-StyledStrings = "1.11.0"
 Test = "1.11.0"
 julia = "1.9"
 
