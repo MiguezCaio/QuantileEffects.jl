@@ -1,6 +1,6 @@
 using QuantileEffects
 using Test
 
-@testset "QuantileEffects.jl" begin
-    # Write your tests here.
+@testset "foo_checks" begin
+    @test foo(0)<1E-16
 end

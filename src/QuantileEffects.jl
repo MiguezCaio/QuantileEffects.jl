@@ -404,6 +404,7 @@ function cic_low(f00, f01, f10, f11, qq, YS, YS01)
     return est
 end
 
+
 function cic(df,trat_var,post_var,pre_var,outcome, qq, standard_error,bootstrap ,bootstrap_reps,cluster,sub_sample_factor=1)
 
     # INFORMAÇÕES GERAIS
@@ -515,6 +516,7 @@ function cic(df,trat_var,post_var,pre_var,outcome, qq, standard_error,bootstrap 
 
     if bootstrap > 0
         #boot = zeros(size(est))
+
         Nboot = bootstrap_reps
         boot_est = zeros(Nboot,length(est_con))
         #boot_est2 = zeros(Nboot,length(est_con))
