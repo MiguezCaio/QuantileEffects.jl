@@ -1,12 +1,7 @@
 module QuantileEffects
 
 using Expectations, Distributions
-using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels
-using StatFiles,Statistics
-using Bootstrap
-using DelimitedFiles
-using CategoricalArrays
-using JSON
+using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels,StatFiles,Statistics,CategoricalArrays,JSON
 
 function foo(mu = 1., sigma = 2.)
     println("Modified foo definition")
