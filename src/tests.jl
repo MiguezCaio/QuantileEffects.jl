@@ -1,4 +1,3 @@
-module QuantileEffects
 
 using Expectations, Distributions
 using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels,StatFiles,Statistics,CategoricalArrays,JSON
@@ -104,24 +103,20 @@ function prob(Y, YS)
 
     return pi
 end
-import KernelDensity: kernel_dist
-
-# Register Epanechnikov with KernelDensity
-
-function fden(ys::AbstractVector, Y::AbstractVector)
-    Yc = collect(skipmissing(Y))
-    n = length(Yc)
-    # Silverman's rule-of-thumb bandwidth
-    h = 1.06 * std(Yc) * n^(-1/5)
-    # 3) force into (n×1) and (1×m)
-    Ycol = reshape(Yc, n, 1)     # n×1
-    yrow = reshape(ys, 1, :)     # 1×m
-    # Build the matrix of scaled differences: size n×m
-    D = (Ycol .- yrow) ./ h
-     # Epanechnikov kernel: (3/(4√5))·(1 - u^2/5)  for |u| < √5, else 0
-    K = @. (abs(D) <= √5) * (1 - D^2/5) * (3/(4√5))
-    # Average over rows and rescale by 1/h
-    return vec(sum(K, dims=1)) ./ (n * h)
+function fden(y, Y)
+    # Silverman's optimal bandwidth
+    h = 1.06 * std(Y) * length(Y)^(-1/5)
+    
+    # Calculate scaled differences
+    d = (Y .- y) / h
+    
+    # Epanechnikov kernel
+    kd = (abs.(d) .< sqrt(5)) .* (1 .- d.^2 / 5) * (3 / (4 * sqrt(5)))
+    
+    # Estimated density
+    fdensity = mean(kd) / h
+    
+    return fdensity
 end
 function prob2(Y, YS)
     # Calculate the tolerance (half the minimum difference between support points)
@@ -492,10 +487,11 @@ function cic(df,
 
         # A. Erro padrão para o estimador contínuo (delta method)
         cc = 1e-8
-        
+        F00_10 = zeros(NYS10)
+        F01invF00_10 = zeros(NYS10)
         F00_10 = cdf.(YS10, Ref(F00), Ref(YS))
         F01invF00_10 = cdfinv.(F00_10, Ref(F01), Ref(YS))
-        f01F01invF00_10 = fden(F01invF00_10, Y01)
+        f01F01invF00_10 = fden.(F01invF00_10[i], Y01)
         # pre-mask your densities once
         f10m   = f10[f10 .> cc]                # vector of length L10
         f00m   = f00[f00 .> cc]                # vector of length L00
@@ -505,46 +501,31 @@ function cic(df,
         
         # 1. Contribution of Y00
         M00 = ((YS00 .<= YS10') .- F00_10') ./ f01F01invF00_10'
-        P00 =  M00 .* f10m
-        V00 = sum(P00.^2 .* f00m) / length(Y00)
+        P00 =  M00 * f10m
+        for i in 1:NYS00
+            PY00 = ((YS00[i] <= YS10) .- F00_10) ./ f01F01invF00_10
+            P[i] = PY00' * f10(f10 .> cc)
+        end
+        V00 = sum(P .* P .* f00(f00 .> cc)) / length(Y00)
         
-        # first build the full matrix of cdf’s: C01[i,j] = cdf(YS01[i], F01, YS[j])
-        C01 =cdf.(YS01,Ref(F01),Ref(YS))
-        # then apply the same subtraction / division and mask to f10
-        M01 = -((C01 .<= F00_10') .- F00_10') ./ f01F01invF00_10'
-        P01 =  M01 * f10m                     # length NYS01
-        V01 = sum(P01.^2 .* f01m) / length(Y01)
+        # 2. Contribution of Y01
+        P = zeros(NYS01)
+        for i in 1:NYS01
+            PY01 = -((cdf(YS01[i], F01, YS) .<= F00_10) .- F00_10) ./ f01F01invF00_10
+            P[i] = PY01' * f10(f10 .> cc)
+        end
+        V01 = sum(P .* P .* f01(f01 .> cc)) / length(Y01)
         
         # 3. Contribution of Y10
-        P10 = F01invF00_10 .- sum(F01invF00_10.* f10m)
-        V10 = sum(P10.^2 .* f10m) / length(Y10)
+        P = F01invF00_10 .- F01invF00_10' * f10(f10 .> cc)
+        V10 = sum(P .* P .* f10(f10 .> cc)) / length(Y10)
         
         # 4. Contribution of Y11
-        P11 = YS11 .- sum(YS .* f11)
-        V11 = sum(P11.^2 .* f11m) / length(Y11)
+        P = YS11 .- YS' * f11
+        V11 = sum(P .* P .* f11(f11 .> cc)) / length(Y11)
+        
         se_con = sqrt(V00 + V01 + V10 + V11)
         se[1] = se_con
-
-        #### Now the quantile analytical standard errors
-        cc = 1e-8
-        #Now we proceed to create the functions associated withe the quantile case in page 464 of AI2006
-        #F00_10 = cdf.(YS10, Ref(F00), Ref(YS))
-        F10invqq = cdfinv.(qq, Ref(F10), Ref(YS))
-        F00F10invqq = cdf.(F10invqq, Ref(F00), Ref(YS))
-        F01invF00F10invqq = cdfinv.(F00F10invqq, Ref(F01), Ref(YS))
-        f01F01invF00F10invqq=fden(F01invF00F10invqq,Y01)
-        VAR_Matrix=zeros(length(qq),4)
-        
-
-        ##Contribution of Vpq
-        M00q = (YS00 .<= cdfinv.(qq,Ref(F10), Ref(YS))) .- cdfinv.(qq,Ref(F10), Ref(YS)) ./ f01F01invF00F10invqq
-        P00q =  M00q .* f10m
-        V00 = sum(P00q.^2 .* f00m) / length(Y00)
-
-        ##Contribution of Vqq
-        M01= (cdf.(YS01, Ref(F00), Ref(YS)) .<= cdf.(cdfinv.(qq,Ref(F10), Ref(YS)),Ref(F00), Ref(YS))) .- cdfinv.(qq,Ref(F10), Ref(YS)) ./ f01F01invF00F10invqq
-        P00q =  M00q .* f10m
-        V00 = sum(P00q.^2 .* f01m) / length(Y00)
     end
 
     if bootstrap > 0
@@ -646,6 +627,4 @@ function cic(df,
     end
     return est
 end
-export cic
 
-end
