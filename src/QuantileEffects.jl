@@ -123,7 +123,18 @@ function fden(ys::AbstractVector, Y::AbstractVector)
     # Average over rows and rescale by 1/h
     return vec(sum(K, dims=1)) ./ (n * h)
 end
-fden(y::Real, Y::AbstractVector) = fden([y], Y)[1]
+using KernelDensity,Distributions,Interpolations
+import KernelDensity: kernel_dist
+kernel_dist(::Type{Epanechnikov},w::Real) = Epanechnikov(0.0,w)
+function fden_package(ys::AbstractVector, Y::AbstractVector)
+    # 1) build the KDE object once (Epanechnikov is the default)
+    Yc = collect(skipmissing(Y))
+    kde_est = kde(Yc; kernel=Epanechnikov)
+    # 2) then get density for any vector `ys` of length 321k without memory blowup
+    densities = pdf.(Ref(kde_est), ys) 
+    return densities   
+end
+fden_package(y::Real, Y::AbstractVector) = fden_package([y], Y)[1]
 function prob2(Y, YS)
     # Calculate the tolerance (half the minimum difference between support points)
     mdys = minimum(abs.(YS[2:end] .- YS[1:end-1])) / 2
@@ -206,7 +217,7 @@ function cic_con(f00, f01, f10, f11, qq, YS, YS01)
     return est
 end
 function cic_dci(f00, f01, f10, f11, qq, YS, YS01)
-# INFORMAÇÕES GERAIS
+    # INFORMAÇÕES GERAIS
     # Esta função calcula o estimador CIC discreto. Primeiro, estimamos a CDF de Y^N_11 usando a equação (29) do artigo,
     # e depois usamos isso para calcular o efeito médio do tratamento.
 
@@ -511,11 +522,11 @@ function cic(df,
         
         # 1. Contribution of Y00
         M00 = ((YS00[f00[idx00] .> cc ] .<= YS10[f10[idx10] .> cc]') .- F00_10') ./ f01F01invF00_10'
-        P00 =  M00 .* f10m
+        P00 =  M00 * f10m
         V00 = sum(P00.^2 .* f00m) / length(Y00)
         
         # first build the full matrix of cdf’s: C01[i,j] = cdf(YS01[i], F01, YS[j])
-        C01 =cdf_empirical.(YS01,Ref(F01),Ref(YS))
+        C01 =cdf_empirical.(YS01[f01[idx01] .> cc ],Ref(F01),Ref(YS))
         # then apply the same subtraction / division and mask to f10
         M01 = -((C01 .<= F00_10') .- F00_10') ./ f01F01invF00_10'
         P01 =  M01 * f10m                     # length NYS01
@@ -534,10 +545,10 @@ function cic(df,
         #### Now the quantile analytical standard errors
         cc = 1e-8
                # 2) write a small helper that computes se for a single q
-        f00m = f00[f00 .> cc];  N00 = length(Y00)
-        f01m = f01[f01 .> cc];  N01 = length(Y01)
-        f10m = f10[f10 .> cc];  N10 = length(Y10)
-        f11m = f11[f11 .> cc];  N11 = length(Y11)
+        N00 = length(Y00)
+        N01 = length(Y01)
+        N10 = length(Y10)
+        N11 = length(Y11)
         function se_for(q)
             # back‐transform quantiles
             x10 = cdfinv(q, F10, YS)
@@ -569,12 +580,12 @@ function cic(df,
             return sqrt(V00 + V01 + V10 + V11)
         end
         se_vec = [ se_for(q) for q in qq ]
-        se[2:end]=se_vec
+        se[1][2:end]=se_vec
     end
 
-    if bootstrap > 0
+    if bootstrap
         #boot = zeros(size(est))
-        Nboot = bootstrap
+        Nboot = bootstrap_reps
         boot_est = zeros(Nboot,length(est_con))
         boot_est2 = zeros(Nboot,length(est_con))
         boot_est3 = zeros(Nboot,length(est_con))
