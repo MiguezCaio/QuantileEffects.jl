@@ -2,7 +2,7 @@
 
 julia_version = "1.11.1"
 manifest_format = "2.0"
-project_hash = "4d83b771176fbf87def88288e606069aeaac67c1"
+project_hash = "2e7824090ec2470606e7b0ef1a30f50bb3e0b682"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -85,9 +85,9 @@ weakdeps = ["SparseArrays"]
     ChainRulesCoreSparseArraysExt = "SparseArrays"
 
 [[deps.Combinatorics]]
-git-tree-sha1 = "08c8b6831dc00bfea825826be0bc8336fc369860"
+git-tree-sha1 = "8010b6bb3388abe68d95743dcbea77650bb2eddf"
 uuid = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
-version = "1.0.2"
+version = "1.0.3"
 
 [[deps.Compat]]
 deps = ["TOML", "UUIDs"]
@@ -149,9 +149,9 @@ version = "1.11.0"
 
 [[deps.Distributions]]
 deps = ["AliasTables", "FillArrays", "LinearAlgebra", "PDMats", "Printf", "QuadGK", "Random", "SpecialFunctions", "Statistics", "StatsAPI", "StatsBase", "StatsFuns"]
-git-tree-sha1 = "6d8b535fd38293bc54b88455465a1386f8ac1c3c"
+git-tree-sha1 = "3e6d038b77f22791b8e3472b7c633acea1ecac06"
 uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
-version = "0.25.119"
+version = "0.25.120"
 
     [deps.Distributions.extensions]
     DistributionsChainRulesCoreExt = "ChainRulesCore"
@@ -473,9 +473,9 @@ version = "1.8.0"
 
 [[deps.PDMats]]
 deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
-git-tree-sha1 = "0e1340b5d98971513bddaa6bbed470670cebbbfe"
+git-tree-sha1 = "f07c06228a1c670ae4c87d1276b92c7c597fdda0"
 uuid = "90014a1f-27ba-587c-ab20-58faa44d9150"
-version = "0.11.34"
+version = "0.11.35"
 
 [[deps.Parsers]]
 deps = ["Dates", "PrecompileTools", "UUIDs"]
@@ -688,9 +688,9 @@ version = "1.7.0"
 
 [[deps.StatsBase]]
 deps = ["AliasTables", "DataAPI", "DataStructures", "LinearAlgebra", "LogExpFunctions", "Missings", "Printf", "Random", "SortingAlgorithms", "SparseArrays", "Statistics", "StatsAPI"]
-git-tree-sha1 = "29321314c920c26684834965ec2ce0dacc9cf8e5"
+git-tree-sha1 = "b81c5035922cc89c2d9523afc6c54be512411466"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
-version = "0.34.4"
+version = "0.34.5"
 
 [[deps.StatsFuns]]
 deps = ["HypergeometricFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
