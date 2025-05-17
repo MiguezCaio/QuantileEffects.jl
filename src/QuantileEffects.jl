@@ -1,9 +1,10 @@
 module QuantileEffects
 
-using Expectations, Distributions
-using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels,StatFiles,Statistics,CategoricalArrays,JSON
+using Distributions
+using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels,Statistics,CategoricalArrays,JSON
 using LinearAlgebra
-
+using Pkg
+export DataFrame
 
 function cdf_empirical(y, P, YS)
     # YS is a sorted vector of distinct support points.
