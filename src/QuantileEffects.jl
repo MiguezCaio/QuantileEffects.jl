@@ -3,14 +3,7 @@ module QuantileEffects
 using Expectations, Distributions
 using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels,StatFiles,Statistics,CategoricalArrays,JSON
 using LinearAlgebra
-function foo(mu = 1., sigma = 2.)
-    println("Modified foo definition")
-    d = Normal(mu, sigma)
-    E = expectation(d)
-    return E(x -> cos(x))
-end
-export DataFrame, load
-export foo
+
 
 function cdf_empirical(y, P, YS)
     # YS is a sorted vector of distinct support points.
@@ -611,18 +604,20 @@ function cic(df,
         
             # 1. Contribution of Y00
             Y00s = YS00[f00[idx00] .> cc]        # length n00
+            N00=length(Y00s)
             Y10s = YS10[f10[idx10] .> cc]        # length n10
             w       = f10m ./ f01F01invF00_10_fixed                       # length n10
             B       = sum(F00_10 .* w)   # constant term
             # wsuf[k] = sum_{j=k..end} w[j]
             wsuf = reverse!(cumsum(reverse(w)))     
-            P00 = similar(Y00s)
+            P00 = zeros(Float64, N00)
             j    = 1
             for i in eachindex(Y00s)
             # advance j until Y10s[j] ≥ Y00s[i]
             while j ≤ length(Y10s) && Y10s[j] < Y00s[i]
                 j += 1
             end
+        
             P00[i] = (j > length(Y10s) ? 0 : wsuf[j]) - B
             end
             V00 = sum(P00.^2 .* f00m) / length(Y00)
@@ -634,6 +629,7 @@ function cic(df,
             =#
             #We do the same conditional weighted sum as before
             Y01s=YS01[f01[idx01] .> cc ]
+            N01=length(Y01s)
             C01 =cdf_empirical.(Y01s,Ref(F01),Ref(YS))
             # 2.a) weights and constant B
             w = f10m ./ f01F01invF00_10_fixed                    # length n10
@@ -645,8 +641,8 @@ function cic(df,
             wsuf   = reverse!(cumsum(reverse(w)))  # length n10
 
             # --- 3) evaluate P01 without any big matrix ---
-            P01 = similar(Y01s)                  # length n01
-
+            #P01 = similar(Y01s)                  # length n01
+            P01 = zeros(Float64, N01)
 
             j = 1
             for (k, c) in enumerate(C01)
