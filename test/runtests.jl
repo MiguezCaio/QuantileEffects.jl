@@ -1,7 +1,6 @@
 using Test
 using CSV
 using QuantileEffects
-using DelimitedFiles
 file =joinpath("mvd.dat")
 
 #"C:\Users\migue\OneDrive - Fundacao Getulio Vargas - FGV\Projetos\Julia Servidor\cicprograms"
