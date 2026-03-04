@@ -1,7 +1,7 @@
 using Test
 using CSV
 using QuantileEffects
-file =joinpath("mvd.dat")
+file =joinpath("test","mvd.dat")
 
 #"C:\Users\migue\OneDrive - Fundacao Getulio Vargas - FGV\Projetos\Julia Servidor\cicprograms"
 # read it in, collapsing repeated spaces into one
@@ -23,7 +23,7 @@ outcome="Column1"
 nboot=20
 sub_sample_factor=1
 percentiles=collect(0.01:0.01:0.99)
-
+test_rif=calculate_rif(df,outcome,0.5)
 @testset "CIC smoke‐tests" begin
     result = cic(df,trat_var,post_var,pre_var,outcome, percentiles,1,1,true,nboot,missing)
 # 3) Basic sanity checks
