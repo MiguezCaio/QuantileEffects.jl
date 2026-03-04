@@ -1,7 +1,7 @@
 using Test
 using CSV
 using QuantileEffects
-file =joinpath("test","mvd.dat")
+file = joinpath(@__DIR__, "mvd.dat")
 
 #"C:\Users\migue\OneDrive - Fundacao Getulio Vargas - FGV\Projetos\Julia Servidor\cicprograms"
 # read it in, collapsing repeated spaces into one
