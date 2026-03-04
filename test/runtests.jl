@@ -1,7 +1,9 @@
 using Test
 using CSV
+using Statistics
+using Random
 using QuantileEffects
-file =joinpath("test","mvd.dat")
+file = joinpath(@__DIR__, "mvd.dat")
 
 #"C:\Users\migue\OneDrive - Fundacao Getulio Vargas - FGV\Projetos\Julia Servidor\cicprograms"
 # read it in, collapsing repeated spaces into one
@@ -58,4 +60,69 @@ test_rif=calculate_rif(df,outcome,0.5)
             end
         end
     end                         # no NaNs/Infs
+end
+
+@testset "RIF smoke-tests" begin
+    col = collect(skipmissing(df[!, Symbol(outcome)]))
+
+    @testset "calculate_rif" begin
+        # Output length matches number of rows in df
+        rif50 = calculate_rif(df, outcome, 0.5)
+        @test length(rif50) == size(df, 1)
+
+        # All values are finite
+        @test all(isfinite, rif50)
+
+        # Works for a different quantile
+        rif90 = calculate_rif(df, outcome, 0.9)
+        @test length(rif90) == size(df, 1)
+        @test all(isfinite, rif90)
+    end
+
+    @testset "calculate_rif – E[RIF] = q_τ on continuous data" begin
+        # E[RIF(Y; q_τ, F_Y)] = q_τ is a population property that holds for
+        # continuous distributions (Firpo, Fortin & Lemieux 2009, eq. 3).
+        # It requires P(Y ≤ q_τ) = τ exactly, which fails for discrete outcomes
+        # like the Mauritius wage data. We verify it on synthetic Normal data.
+        Random.seed!(1234)
+        df_cont = DataFrame(y = randn(2000))
+        for τ in (0.25, 0.5, 0.75)
+            rif = calculate_rif(df_cont, "y", τ)
+            @test isapprox(mean(rif), quantile(df_cont.y, τ), rtol=0.05)
+        end
+    end
+
+    @testset "rif_did – unconditional and 1|1 distributions" begin
+        qq_rif = collect(0.1:0.1:0.9)
+        res = rif_did(df, trat_var, post_var, pre_var, outcome, qq_rif)
+
+        # Must return a DataFrame with the right number of rows
+        @test res isa DataFrame
+        @test size(res, 1) == length(qq_rif)
+
+        # All expected columns must be present
+        for col_name in [:percentil, :nota, :DID_pct, :density, :RIF_DID,
+                         :nota11, :DID_pct11, :density11, :RIF_DID11]
+            @test col_name in propertynames(res)
+        end
+
+        # percentil column must equal qq * 100
+        @test res[!, :percentil] ≈ qq_rif .* 100
+
+        # Numeric columns must be finite
+        for col_name in [:nota, :DID_pct, :density, :RIF_DID,
+                         :nota11, :DID_pct11, :density11, :RIF_DID11]
+            @test all(isfinite, res[!, col_name])
+        end
+
+        # Densities must be strictly positive
+        @test all(>(0), res[!, :density])
+        @test all(>(0), res[!, :density11])
+
+        # Unconditional quantiles (nota) are pooled over all four groups,
+        # so they should differ from the 1|1 quantiles (nota11) in general
+        # (they are not guaranteed equal; just check they are both monotone)
+        @test issorted(res[!, :nota])
+        @test issorted(res[!, :nota11])
+    end
 end
