@@ -790,6 +790,7 @@ function cic(df,
     return data
 end
 export cic
+export calculate_rif
 ####Now add the RIF part
 
 function calculate_rif(df,outcome_var, quantile_value)

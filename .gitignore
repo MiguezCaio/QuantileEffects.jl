@@ -1,3 +1,6 @@
 *.jl.*.cov
 *.jl.cov
 *.jl.mem
+*.json
+# Athey & Imbens original MATLAB replication code and local development files
+Other/
