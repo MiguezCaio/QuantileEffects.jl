@@ -1,10 +1,10 @@
 module QuantileEffects
 
 using Distributions
-using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels,Statistics,CategoricalArrays,JSON
+using DataFrames, Random, StatsBase, KernelDensity, GLM, StatsModels, Statistics, JSON, CSV
 using LinearAlgebra
 export DataFrame
-
+wmean(I::AbstractVector, w::AbstractVector) = sum(w .* I) / sum(w)
 function cdf_empirical(y, P, YS)
     # YS is a sorted vector of distinct support points.
     if y < first(YS)
@@ -17,64 +17,33 @@ function cdf_empirical(y, P, YS)
     end
 end
 function cdfinv(y, P, YS)
-    # GENERAL INFORMATION
-    # This function calculates the inverse of the cumulative distribution function 
-    # for a discrete random variable with cumulative distribution function P at the support points YS.
-
-    # INPUT
-    # y is a scalar between zero and one.
-    # P is a vector of cumulative probabilities corresponding to YS.
-
-    # OUTPUT
-    # FINVY is the inverse of the empirical distribution of YS evaluated at y.
-
-    # Tolerance level to avoid issues at actual support points
     cc = 1e-6
-
-     # P assumed sorted increasing, YS sorted support
      if y <= 0.0
         return first(YS)
     elseif y >= 1.0
         return last(YS)
     else
-        # find smallest index i with P[i] >= y - cc
         i = searchsortedfirst(P, y - cc)
-        # clamp just in case y-cc falls below P[1] or above P[end]
         i = clamp(i, 1, length(YS))
         return YS[i]
     end
-end 
+end
 function cdfinv_bracket(y, P, YS)
     cc = 1e-6
     n  = length(YS)
     p1 = P[1]
     if y >= p1 - cc/2
         # find the largest index i with P[i] <= y + cc
+        
         i = searchsortedlast(P, y + cc)
-        # if y+cc < P[1], searchsortedlast gives 0, so clamp to 1:
         i = clamp(i, 1, n)
         return YS[i]
     else
-        # “minus infinity” rule: go a little below the minimum support
+          # “minus infinity” rule: go a little below the minimum support
         return YS[1] - 100 * (YS[n] - YS[1] + 1)
     end
 end
-function supp(Y)
-    # Initialize an empty array for the support points
-    YS = []
-    
-    # While there are still elements in Y
-    while length(Y) > 0
-        # Append the minimum value of Y to YS
-        push!(YS, minimum(Y))
-        
-        # Filter out elements that are equal to the minimum value
-        Y = Y[Y .> minimum(Y)]
-    end
-    
-    # Return the vector of ordered support points
-    return YS
-end
+
 function supp2(Y)
     # Sort the vector and remove duplicates
     return unique(sort(Y))
@@ -89,12 +58,10 @@ function prob(Y, YS)
     # Calculate the frequency (or count) for each support point in YS
     for i in 1:length(YS)
         pi[i] = sum(abs.(Y .- YS[i]) .< (mdys / 100))
-        #println(i)
     end
 
     # Convert counts to proportions
     pi /= sum(pi)
-
     return pi
 end
 import KernelDensity: kernel_dist
@@ -113,34 +80,21 @@ function fden(ys::AbstractVector, Y::AbstractVector)
     D = (Ycol .- yrow) ./ h
      # Epanechnikov kernel: (3/(4√5))·(1 - u^2/5)  for |u| < √5, else 0
     K = @. (abs(D) <= √5) * (1 - D^2/5) * (3/(4√5))
-    # Average over rows and rescale by 1/h
     return vec(sum(K, dims=1)) ./ (n * h)
 end
 import KernelDensity: kernel_dist
 kernel_dist(::Type{Epanechnikov},w::Real) = Epanechnikov(0.0,w)
 function fden_package(ys::AbstractVector, Y::AbstractVector)
-    # 1) build the KDE object once (Epanechnikov is the default)
     Yc = collect(skipmissing(Y))
     kde_est = kde(Yc; kernel=Epanechnikov)
-    # 2) then get density for any vector `ys` of length 321k without memory blowup
-    densities = pdf.(Ref(kde_est), ys) 
-    return densities   
+    densities = pdf.(Ref(kde_est), ys)
+    return densities
 end
 
 fden_package(y::Real, Y::AbstractVector) = fden_package([y], Y)[1]
-function prob2(Y, YS)
-    # Calculate the tolerance (half the minimum difference between support points)
-    mdys = minimum(abs.(YS[2:end] .- YS[1:end-1])) / 2
 
-    # Use a vectorized approach to count frequencies for each support point in YS
-    pi = [count(y -> abs(y - ys) < (mdys / 100), Y) for ys in YS]
-
-    # Convert counts to proportions
-    pi /= sum(pi)
-
-    return pi
-end
 function prob3(Y, YS)
+    #Calculate 
     # Calculate the tolerance (half the minimum difference between support points)
     mdys = minimum(abs.(YS[2:end] .- YS[1:end-1])) / 2
 
@@ -150,16 +104,13 @@ function prob3(Y, YS)
 
     # Convert histogram counts to proportions
     pi = hist.weights / sum(hist.weights)
-
     return pi
 end
 function cic_con(f00, f01, f10, f11, qq, YS, YS01)
-
     # INFORMAÇÕES GERAIS
     # Esta função calcula o estimador contínuo CIC. Primeiro
-    # estimamos a CDF de Y^N_11 usando a equação (9) do artigo e
+    # estimamos a CDF de Y^N_11 usando a equação (9) do artigo Athey Imbens 2006 e
     # depois usamos isso para calcular o efeito médio do tratamento.
-
     # ENTRADAS
     # f00 é o vetor de probabilidades no grupo (0,0)
     # f01 é o vetor de probabilidades no grupo (0,1)
@@ -173,16 +124,11 @@ function cic_con(f00, f01, f10, f11, qq, YS, YS01)
 
     # SAÍDA
     # est é um escalar com as estimativas CIC contínuas
-
-    F00 = cumsum(f00)  # funções de distribuição acumulada
-    F01 = cumsum(f01)  # funções de distribuição acumulada
-    F10 = cumsum(f10)  # funções de distribuição acumulada
-    F11 = cumsum(f11)  # funções de distribuição acumulada
-
-    #ccc = min(max(abs(cumsum(f00) - cumsum(f01))) / 1000, 1e-9)
-    # tolerância que será usada para distinguir entre probabilidades
-
-    # Para cada valor de y em YS01, que é o suporte de Y01
+    F00 = cumsum(f00)
+    F01 = cumsum(f01)
+    F10 = cumsum(f10)
+    F11 = cumsum(f11)
+      # Para cada valor de y em YS01, que é o suporte de Y01
     # calculamos:
     # 1. F_01(y)
     # 2. F_00^-1(F_01(y))
@@ -193,6 +139,7 @@ function cic_con(f00, f01, f10, f11, qq, YS, YS01)
     # Vectorize the first loop
     F01y = cdf_empirical.(YS01, Ref(F01), Ref(YS))             # Apply cdf to each element of YS01
     F00invF01y = cdfinv.(F01y, Ref(F00), Ref(YS))    # Apply cdfinv to the result
+    # Continuous mean estimate
     F10F00invF01y = cdf_empirical.(F00invF01y, Ref(F10), Ref(YS)) # Apply cdf to the result
     FCO = F10F00invF01y
     FCO[end] = 1  # Set the last element to 1
@@ -244,14 +191,13 @@ function cic_dci(f00, f01, f10, f11, qq, YS, YS01)
     # 6. FDCI_weight(y) (peso para independência condicional discreta)
 
     ns01 = length(YS01)
-    FUB =  zeros(ns01)  # Estimativa do CDF para o limite superior
-    FLB = zeros(ns01)  # Estimativa do CDF para o limite inferior
+    FUB =  zeros(ns01)
+    FLB = zeros(ns01)
     FDCI = zeros(ns01)
-    # Vectorized computation of cdf and inverse cdf operations for YS01
-    F01y = cdf_empirical.(YS01, Ref(F01), Ref(YS))             # Apply cdf to each element of YS01
-    F00invF01y = cdfinv.(F01y, Ref(F00), Ref(YS))    # Apply cdfinv to the result
+    F01y = cdf_empirical.(YS01, Ref(F01), Ref(YS))
+    F00invF01y = cdfinv.(F01y, Ref(F00), Ref(YS))
     F00invbF01y=cdfinv_bracket.(F01y,Ref(F00),Ref(YS))
-    F10F00invF01y = cdf_empirical.(F00invF01y, Ref(F10), Ref(YS)) # Apply cdf to the result
+    F10F00invF01y = cdf_empirical.(F00invF01y, Ref(F10), Ref(YS))
     F10F00invbF01y=cdf_empirical.(F00invbF01y,Ref(F10),Ref(YS))
     F00F00invF01y = cdf_empirical.(F00invF01y, Ref(F00), Ref(YS))
     F00F00invbF01y = cdf_empirical.(F00invbF01y, Ref(F00), Ref(YS))
@@ -265,20 +211,14 @@ function cic_dci(f00, f01, f10, f11, qq, YS, YS01)
     w = ifelse.(
         Δ .> ccc,
         numer ./ Δ,
-        zero.(Δ)           # produces a vector of zeros, same type/size as Δ
+        zero.(Δ)
     )
 
-
-    # Finally build FDCI in one shot:
     FDCI = FLB .+ (FUB .- FLB) .* w
-
-    # Adjust FDCI at the last value
     FDCI[end] = 1
 
-    # Conditional independence estimate
     est = (F11 - vcat(0, F11[1:end-1]))' * YS - (FDCI - vcat(0, FDCI[1:end-1]))' * YS01
 
-    # Quantile estimates
     Nq = length(qq)
     est = [est zeros(1, Nq)]
     est[1, 2:end] .= cdfinv.(qq, Ref(F11), Ref(YS)) .- cdfinv.(qq, Ref(FDCI), Ref(YS01))
@@ -322,14 +262,12 @@ function cic_upp(f00, f01, f10, f11, qq, YS, YS01)
     # 6. FDCI_weight(y) (peso para independência condicional discreta)
 
     ns01 = length(YS01)
-    FUB =  zeros(ns01) 
+    FUB =  zeros(ns01)
     # Vectorized computation of cdf and inverse cdf operations for YS01
     F01y = cdf_empirical.(YS01, Ref(F01), Ref(YS))             # Apply cdf to each element of YS01
     F00invF01y = cdfinv.(F01y, Ref(F00), Ref(YS))    # Apply cdfinv to the result
     F10F00invF01y = cdf_empirical.(F00invF01y, Ref(F10), Ref(YS)) # Apply cdf to the result
     FUB = F10F00invF01y
-    # Ajustando as estimativas das CDFs de Y^N_11 
-    # em valores maiores ou iguais ao máximo de Y01.
     FUB[ns01] = 1
 
     # Dado as funções de distribuição, as estimativas são:
@@ -337,7 +275,6 @@ function cic_upp(f00, f01, f10, f11, qq, YS, YS01)
     # tau = (F11 - vcat(0, F11[1:end-1]))' * YS
     #      - (F^N_11 - vcat(0, FUB[1:end-1]))' * YS01
 
-    # Estimativa de independência condicional
     est = (F11 - vcat(0, F11[1:end-1]))' * YS - (FUB - vcat(0, FUB[1:end-1]))' * YS01
 
     # Estimativas dos quantis
@@ -351,7 +288,7 @@ function cic_low(f00, f01, f10, f11, qq, YS, YS01)
 
     # INFORMAÇÕES GERAIS
     # Esta função calcula o estimador CIC contínuo para o limite inferior. 
-    # Estimamos a CDF de Y^N_11 usando a equação (25) do artigo, 
+    # Estimamos a CDF de Y^N_11 usando a equação (25) do artigo Athey & Imbens 2006, 
     # e depois utilizamos isso para calcular o efeito médio do tratamento.
 
     # ENTRADAS
@@ -385,30 +322,23 @@ function cic_low(f00, f01, f10, f11, qq, YS, YS01)
     # 6. FDCI_weight(y) (peso para independência condicional discreta)
 
     ns01 = length(YS01)
-    FLB = zeros(ns01)  # Estimador do limite inferior
+    FLB = zeros(ns01)
 
-
-    F01y = cdf_empirical.(YS01, Ref(F01), Ref(YS))             # Apply cdf to each element of YS01
+    F01y = cdf_empirical.(YS01, Ref(F01), Ref(YS))
     F00invbF01y = cdfinv_bracket.(F01y, Ref(F00), Ref(YS))
     F10F00invbF01y = cdf_empirical.(F00invbF01y, Ref(F10), Ref(YS))
     FLB = F10F00invbF01y
-
-    # Ajustando as estimativas das CDFs de Y^N_11 
-    # em valores maiores ou iguais ao máximo de Y01
     FLB[ns01] = 1
 
     # Dado as funções de distribuição, as estimativas são:
     # tau = (F11 - vcat(0, F11[1:end-1]))' * YS 
     #      - (F^N_11 - vcat(0, FLB[1:end-1]))' * YS01
 
-    # Estimativa de independência condicional
+
     est = (F11 - vcat(0, F11[1:end-1]))' * YS - (FLB - vcat(0, FLB[1:end-1]))' * YS01
-    #est = 0 
-    # Estimativas dos quantis
     Nq = length(qq)
     est = [est zeros(1, Nq)]
     est[1, 2:end] .= cdfinv.(qq, Ref(F11), Ref(YS)) .- cdfinv.(qq, Ref(FLB), Ref(YS01))
-
 
     return est
 end
@@ -508,12 +438,12 @@ function cic(df,
     @assert 0.0 < sub_sample_factor ≤ 1.0 "sub_sample_factor must be in (0,1]"
     # INFORMAÇÕES GERAIS
     # Este programa calcula quatro conjuntos de estimativas CIC
-    # (para independência condicional contínua, discreta, limite inferior e limite superior)
+    # (para contínua, discreta, limite inferior e limite superior)
     # Se necessário, também calcula erros padrão analíticos e erros padrão bootstrap.
-    ###First we remove any missing values
+    ### First we remove any missing values
     df2=df[.!ismissing.(df[!,Symbol(trat_var)]) .& .!ismissing.(df[!,Symbol(pre_var)]) .& .!ismissing.(df[!,Symbol(post_var)]) .& .!ismissing.(df[!,Symbol(outcome)]),:]
     subsample_indices = sample(1:size(df2, 1), Int(floor(size(df2, 1) * sub_sample_factor)), replace=false)
-    if sub_sample_factor ==1 
+    if sub_sample_factor ==1
         df3=df2
     else
         df3 = df2[subsample_indices, :]
@@ -533,9 +463,7 @@ function cic(df,
     # bootstrap é um indicador se os erros padrão bootstrap devem ser calculados
     # se for positivo, os erros padrão bootstrap serão calculados com o número de repetições igual ao valor de bootstrap.
 
-    # SAÍDAS
-    # est é um vetor de estimativas:
-    # 1. contínua
+ 
     
     # se é um vetor de estimativas dos erros padrão:
     # 1. contínua
@@ -554,24 +482,16 @@ function cic(df,
     f11 = prob3(Y11, YS)                  # vetor de probabilidades
     # Estimativa contínua
     est_con = cic_con(f00, f01, f10, f11, qq, YS, YS01)
-
-    # Estimativa de independência condicional
     est_dci = cic_dci(f00, f01, f10, f11, qq, YS, YS01)
-
-    # Estimativa do limite inferior
     est_low = cic_low(f00, f01, f10, f11, qq, YS, YS01)
-
-    # Estimativa do limite superior
     est_upp = cic_upp(f00, f01, f10, f11, qq, YS, YS01)
-    
+
    est = [est_con, est_dci, est_low, est_upp]
-   #est = est_con
-    # Cálculo dos erros padrão
    se = [ zeros(size(e)) for e in est ]
 
     if standard_error == 1
         println("running the analytical calculations")
-        F00 = cumsum(f00) / maximum(cumsum(f00))  # normalização para 1
+        F00 = cumsum(f00) / maximum(cumsum(f00))
         F01 = cumsum(f01) / maximum(cumsum(f01))
         F10 = cumsum(f10) / maximum(cumsum(f10))
         F11 = cumsum(f11) / maximum(cumsum(f11))
@@ -601,7 +521,7 @@ function cic(df,
             f01F01invF00_10 = fden_r01(F01invF00_10)
             ϵ = 1e-4
             f01F01invF00_10_fixed = ifelse.(f01F01invF00_10 .== 0.0, ϵ, f01F01invF00_10)
-        
+
             # 1. Contribution of Y00
             Y00s = YS00[f00[idx00] .> cc]        # length n00
             N00=length(Y00s)
@@ -609,7 +529,7 @@ function cic(df,
             w       = f10m ./ f01F01invF00_10_fixed                       # length n10
             B       = sum(F00_10 .* w)   # constant term
             # wsuf[k] = sum_{j=k..end} w[j]
-            wsuf = reverse!(cumsum(reverse(w)))     
+            wsuf = reverse!(cumsum(reverse(w)))
             P00 = zeros(Float64, N00)
             j    = 1
             for i in eachindex(Y00s)
@@ -617,7 +537,6 @@ function cic(df,
             while j ≤ length(Y10s) && Y10s[j] < Y00s[i]
                 j += 1
             end
-        
             P00[i] = (j > length(Y10s) ? 0 : wsuf[j]) - B
             end
             V00 = sum(P00.^2 .* f00m) / length(Y00)
@@ -646,49 +565,35 @@ function cic(df,
 
             j = 1
             for (k, c) in enumerate(C01)
-                # advance j until F_s[j] >= c
                 while j ≤ length(F00_10) && F00_10[j] < c
                     j += 1
                 end
-                # suffix‐sum at j is sum of all w_s[j..end]
                 a = (j > length(F00_10) ? zero(w[i]) : wsuf[j])
                 P01[k] = -(a - B)
             end
 
-            # --- 4) compute the variance contribution ---
             V01 = sum(P01.^2 .* f01m) / length(Y01)
-            
-            # 3. Contribution of Y10
+
             P10 = F01invF00_10 .- sum(F01invF00_10.* f10m)
             V10 = sum(P10.^2 .* f10m) / length(Y10)
-            
-            # 4. Contribution of Y11
+
             P11 = YS11 .- sum(YS .* f11)
             V11 = sum(P11.^2 .* f11m) / length(Y11)
             se_con = sqrt(V00 + V01 + V10 + V11)
             se[1][1] = se_con
         end
 
-        #### Now the quantile analytical standard errors
-        # 2) write a small helper that computes se for a single q
-        
-        # do this *once* per bootstrap sample:
         se_boot = make_se_estimator(Y00, Y01, Y10, Y11; cc=1e-8)
         se_vec = [ se_boot(q) for q in qq ]
         se[1][2:end]=se_vec
     end
     se_mat = Array{Float64}(undef, bootstrap_reps, length(qq)+1)
     if bootstrap
-        #boot = zeros(size(est))
         Nboot = bootstrap_reps
         boot_est = zeros(Nboot,length(est_con))
         boot_est2 = zeros(Nboot,length(est_con))
         boot_est3 = zeros(Nboot,length(est_con))
         boot_est4 = zeros(Nboot,length(est_con))
-        #N00 = length(Y00)
-        #N01 = length(Y01)
-        #N10 = length(Y10)
-        #N11 = length(Y11)
         n = nrow(df2)
         if cluster === missing
             clusters = missing
@@ -698,9 +603,9 @@ function cic(df,
         for i in 1:Nboot
             println("rep $i")
             if cluster === missing
-                idx    = rand(1:n, n)           # sample rows with replacement
+                idx    = rand(1:n, n)
                 boot_df = df2[idx, :]
-            else 
+            else
                 indices = rand(1:length(clusters), length(clusters))
                 aa = clusters[indices]
                 sampled_clusters_set = Set(aa)
@@ -708,7 +613,7 @@ function cic(df,
             end
             boot_df2=boot_df
             subsample_indices = sample(1:size(boot_df2, 1), Int(floor(size(boot_df2, 1) * sub_sample_factor)), replace=false)
-            if sub_sample_factor ==1 
+            if sub_sample_factor ==1
                 boot_df3=boot_df2
             else
                 boot_df3 = boot_df2[subsample_indices, :]
@@ -716,12 +621,12 @@ function cic(df,
             Y00b=boot_df3[(boot_df3[!,Symbol(trat_var)] .== 0) .& (boot_df3[!,Symbol(pre_var)] .== 1), :][!,Symbol(outcome)]
             Y01b=boot_df3[(boot_df3[!,Symbol(trat_var)] .== 0) .& (boot_df3[!,Symbol(post_var)] .== 1), :][!,Symbol(outcome)]
             Y10b=boot_df3[(boot_df3[!,Symbol(trat_var)] .== 1) .& (boot_df3[!,Symbol(pre_var)] .== 1), :][!,Symbol(outcome)]
-            Y11b=boot_df3[(boot_df3[!,Symbol(trat_var)] .== 1) .& (boot_df3[!,Symbol(post_var)] .== 1), :][!,Symbol(outcome)]      
+            Y11b=boot_df3[(boot_df3[!,Symbol(trat_var)] .== 1) .& (boot_df3[!,Symbol(post_var)] .== 1), :][!,Symbol(outcome)]
             YSb=supp2(vcat(Y00b, Y01b, Y10b, Y11b))
-            f00b = prob3(Y00b, YSb)  # Vetor de probabilidades
-            f01b = prob3(Y01b, YSb)  # Vetor de probabilidades
-            f10b = prob3(Y10b, YSb)  # Vetor de probabilidades
-            f11b = prob3(Y11b, YSb)  # Vetor de probabilidades
+            f00b = prob3(Y00b, YSb)
+            f01b = prob3(Y01b, YSb)
+            f10b = prob3(Y10b, YSb)
+            f11b = prob3(Y11b, YSb)
             YS01b = supp2(Y01b)
             boot_est[i, 1:end] = cic_con(f00b, f01b, f10b, f11b, qq, YSb, YS01b)
             boot_est2[i, 1:end] = cic_dci(f00b, f01b, f10b, f11b, qq, YSb, YS01b)
@@ -732,19 +637,12 @@ function cic(df,
             se_vecb = [ se_bootb(q) for q in qq ]
             se_mat[i, 1] = 0
             se_mat[i, 2:end] = se_vecb
-        
         end
-        #se_boot = std(boot_est, dims=1)
-        #se = vcat(se, se_boot)
-        # Inicializar a matriz 3D para armazenar todas as estimativas
-        n_repetitions = size(boot_est, 1)  # Número de repetições de bootstrap
-        n_estimations = size(boot_est, 2)  # Número de estimativas por repetição
-        n_functions = 4                     # Número de funções diferentes (cic_con, cic_dci, cic_low, cic_upp)
+        n_repetitions = size(boot_est, 1)
+        n_estimations = size(boot_est, 2)
+        n_functions = 4
 
-        # Cria uma matriz 3D para armazenar todas as estimativas
         boot_estimates = zeros(n_repetitions, n_estimations, n_functions)
-
-        # Armazenar as estimativas em diferentes "fatias" da 3ª dimensão
         boot_estimates[:, :, 1] = boot_est
         boot_estimates[:, :, 2] = boot_est2
         boot_estimates[:, :, 3] = boot_est3
@@ -770,11 +668,10 @@ function cic(df,
             "boot_est" => boot_estimates,
             "se" => se,
             "se_boot" => se_mat
-
         )
-    else 
+    else
         data = Dict(
-            "est" => est,  # Supondo que você já tenha a variável est
+            "est" => est,
             "boot_est" => 0,
             "se" => se,
             "se_boot" => 0
@@ -788,110 +685,352 @@ function cic(df,
     end
     return data
 end
+
 export cic
 export calculate_rif
-####Now add the RIF part
+export rif_did
+export rif_did_w
 
-function calculate_rif(df,outcome_var, quantile_value)
-    q_value = quantile(skipmissing(df[!,Symbol(outcome_var)]), quantile_value)
-    kde_est = kde(collect(skipmissing(df[!,Symbol(outcome_var)])))  # Kernel density estimate
-    density_at_q = pdf(kde_est, q_value)
-    indicator = df[!,Symbol(outcome_var)] .< q_value
-    rif = q_value .+ ((quantile_value .- indicator) ./ density_at_q)
-    return rif
+################  RIF estimators  ################
+
+"""
+    calculate_rif(df, outcome_var, quantile_value)
+
+Compute the Recentered Influence Function (RIF) for the `quantile_value`-th
+quantile of `outcome_var` for each row of `df`.
+
+The RIF for quantile q_τ (Firpo, Fortin & Lemieux 2009) is:
+
+    RIF(Y; q_τ, F_Y) = q_τ + (τ − 1{Y ≤ q_τ}) / f_Y(q_τ)
+
+where f_Y(q_τ) is a kernel density estimate of Y evaluated at q_τ.
+"""
+function calculate_rif(df, outcome_var, quantile_value)
+    col          = collect(skipmissing(df[!,Symbol(outcome_var)]))
+    q_value      = quantile(col, quantile_value)
+    density_at_q = pdf(kde(col), q_value)
+    indicator    = df[!,Symbol(outcome_var)] .< q_value
+    return q_value .+ ((quantile_value .- indicator) ./ density_at_q)
 end
 
+"""
+    rif_did(df, trat_var, post_var, pre_var, outcome, qq; sub_sample_factor=1.0)
 
-function RIF_DID(df,quantile_value,n_boot,cluster)
-    # Step 1: Create a customized file path based on quantile and n_bootstrap
-    savepath = "boot_results_quantile_$(quantile_value)_nboot_$(n_boot).txt"
-    
-    # Step 2: Check if the file already exists
-    if isfile(savepath)
-        println("File for quantile $quantile_value and n_boot $n_boot already exists. Exiting.")
-        return nothing  # Exit the function early if file exists
+Pure RIF-DID estimator of Quantile Effects (no reweighting).
+
+**Identifying assumption** — distributional parallel trends: absent the reform,
+the CDF of outcomes would have evolved identically in treated and control
+municipalities at every percentile. The counterfactual CDF is:
+
+    F_{Y^N,11}(y) = F_{Y,10}(y) + [F_{Y,01}(y) − F_{Y,00}(y)]
+
+The Quantile Effect at evaluation point y is:
+
+    Δ(y) = [(1 − F_{Y,11}(y)) − (1 − F^N_{Y,11}(y))] / f_Y(y)
+
+Dividing by the density converts the CDF-scale DiD into units of the outcome.
+
+# Arguments
+- `df`: DataFrame with columns `trat_var`, `post_var`, `pre_var`, `outcome`
+- `trat_var`: binary treatment indicator (1 = treated municipality)
+- `post_var`: binary post-reform indicator (1 = post-reform cohort)
+- `pre_var`: binary pre-reform indicator (1 = pre-reform cohort)
+- `outcome`: outcome variable (e.g. standardised test score)
+- `qq`: vector of quantile probabilities in (0,1)
+- `sub_sample_factor`: fraction of rows to use (default 1.0 = full sample)
+
+# Returns
+`DataFrame` with columns `percentil`, `nota`, `DID_pct`, `density`, `RIF_DID`
+(evaluated at pooled quantiles) and `nota11`, `DID_pct11`, `density11`, `RIF_DID11`
+(evaluated at treated-post quantiles).
+
+# References
+Miguez, Araujo, Ogava & Portela (2026), Section 5.1.
+Firpo, Fortin & Lemieux (2009). Havnes & Mogstad (2015).
+"""
+function rif_did(df::DataFrame,
+                 trat_var::AbstractString,
+                 post_var::AbstractString,
+                 pre_var::AbstractString,
+                 outcome::AbstractString,
+                 qq::AbstractVector{<:Real};
+                 sub_sample_factor::Float64 = 1.0)
+    df2 = df[.!ismissing.(df[!,Symbol(trat_var)]) .&
+             .!ismissing.(df[!,Symbol(pre_var)])   .&
+             .!ismissing.(df[!,Symbol(post_var)])  .&
+             .!ismissing.(df[!,Symbol(outcome)]),  :]
+    if sub_sample_factor < 1.0
+        idx = sample(1:nrow(df2), Int(floor(nrow(df2)*sub_sample_factor)), replace=false)
+        df2 = df2[idx, :]
     end
-    b_matrix = []
-    t_matrix=[]
-    rif=calculate_rif(df,quantile_value)
-    df.rif=rif 
-    # Use the flexible cluster variable here
-    model = reg(df,
-     @formula(rif ~ a_trat_post + a_trat_phasein + a_trat + a_sexo + a_raca + a_mora_mae + a_escolaridade_mae + a_mora_pai + a_escolaridade_pai + a_inse + p_sexo + p_raca + p_experiencia + p_escolaridade + p_num_escolas + fe(coorte) + fe(municipio)+ fe(ano))
-    , Vcov.cluster(Symbol(cluster)))
-    # Get unique clusters and their sizes
-    clusters = unique(df[!, Symbol(cluster)])
 
-    for i in 1:n_boot
-        # Sample clusters with replacement
-        indices = rand(1:length(clusters), length(clusters))
-        aa = clusters[indices]
-        
-        #boot_df = DataFrame()
-        #for j in 1:length(aa)
-            # Select data for the current cluster using flexible cluster column
-        #    cc = df[df[!, Symbol(cluster)] .== aa[j], :]
-            
-            # Add the data for this cluster to the bootstrap dataset
-        #    boot_df = vcat(boot_df, cc)
-        #end
-        # Create a bootstrap sample based on the sampled clusters
-        sampled_clusters_set = Set(aa)
-        boot_df = df[in.(df[!, Symbol(cluster)], Ref(sampled_clusters_set)), :]
-        #boot_df = df[in(df[!, Symbol(cluster)], aa), :]
-        # Calculate the RIF for the bootstrapped sample
-        boot_df.rif = calculate_rif(boot_df, quantile_value)
-        model1 = reg(boot_df, @formula(rif ~ a_trat_post + a_trat_phasein + a_trat + a_sexo + a_raca + a_mora_mae + a_escolaridade_mae + a_mora_pai + a_escolaridade_pai + a_inse + p_sexo + p_raca + p_experiencia + p_escolaridade + p_num_escolas + fe(coorte) + fe(municipio)+ fe(ano))
-        , Vcov.cluster(Symbol(cluster)))
-        # Extract coefficients and append to the matrix
-        println(i)
-        push!(b_matrix, coef(model1))
-        push!(t_matrix,(coef(model1)[1,1]-coef(model)[1,1])/sqrt(vcov(model1)[1,1]))
-    end
-    # Step 3: Convert list of coefficients into a matrix
-    b_matrix = reduce(hcat, b_matrix)
+    Y00 = df2[(df2[!,Symbol(trat_var)] .== 0) .& (df2[!,Symbol(pre_var)]  .== 1), Symbol(outcome)]
+    Y01 = df2[(df2[!,Symbol(trat_var)] .== 0) .& (df2[!,Symbol(post_var)] .== 1), Symbol(outcome)]
+    Y10 = df2[(df2[!,Symbol(trat_var)] .== 1) .& (df2[!,Symbol(pre_var)]  .== 1), Symbol(outcome)]
+    Y11 = df2[(df2[!,Symbol(trat_var)] .== 1) .& (df2[!,Symbol(post_var)] .== 1), Symbol(outcome)]
 
-    # Step 4: Calculate the variance-covariance matrix of the coefficients
-    vce_matrix = cov(b_matrix, dims=2)
+    # Support and CDFs (uses shared support across all groups — same as CIC approach)
+    YS  = supp2(vcat(Y00, Y01, Y10, Y11))
+    F00 = cumsum(prob3(Y00, YS))
+    F01 = cumsum(prob3(Y01, YS))
+    F10 = cumsum(prob3(Y10, YS))
+    F11 = cumsum(prob3(Y11, YS))
 
-    # Step 5: save the coef and bootstrapped standard error
-    coef_final=coef(model)[1,1]
-    se_final=sqrt(vce_matrix[1,1])
-    t_sorted=sort(t_matrix)
+    allY = vcat(Y00, Y01, Y10, Y11)
+    #Get the kernel density estimator
+    kd   = kde(Float64.(collect(skipmissing(allY))))
+    kd11 = kde(Float64.(collect(skipmissing(Y11))))
 
+    qs           = collect(qq)
+    quant_vals   = quantile(allY, qs)
+    quant_vals11 = quantile(Y11,  qs)
 
-    # Correcting rounding for percentiles
-    t_5 = t_sorted[ceil(Int, n_boot * 0.05)]
-    t_10 = t_sorted[ceil(Int, n_boot * 0.10)]
-    t_90 = t_sorted[floor(Int, n_boot * 0.90)]
-    t_95 = t_sorted[floor(Int, n_boot * 0.95)]
+    # Counterfactual CDF: F^N_{11}(y) = F_{10}(y) + F_{01}(y) - F_{00}(y)
+    F11_fun(y)  = cdf_empirical(y, F11, YS)
+    Frif_fun(y) = cdf_empirical(y, F10, YS) +
+                  (cdf_empirical(y, F01, YS) - cdf_empirical(y, F00, YS))
+    #We do both for the unconditional quantiles as we do for 11
+    did    = [(1 - F11_fun(y)) - (1 - Frif_fun(y)) for y in quant_vals]
+    rifdid = did ./ pdf.(Ref(kd), quant_vals)
 
-    # Step 7: Prepare results for saving
-    results = DataFrame(
-        coef = [coef_final],
-        se = [se_final],
-        quantile = [quantile_value],
-        n_bootstrap = [n_boot],
-        t_5 = t_5,
-        t_10 = t_10,
-        t_90 = t_90,
-        t_95 = t_95
+    did11    = [(1 - F11_fun(y)) - (1 - Frif_fun(y)) for y in quant_vals11]
+    rifdid11 = did11 ./ pdf.(Ref(kd11), quant_vals11)
+
+    return DataFrame(
+        percentil  = qs .* 100,
+        nota       = quant_vals,
+        DID_pct    = did,
+        density    = pdf.(Ref(kd),   quant_vals),
+        RIF_DID    = rifdid,
+        nota11     = quant_vals11,
+        DID_pct11  = did11,
+        RIF_DID11  = rifdid11,
+        density11  = pdf.(Ref(kd11), quant_vals11)
     )
+end
 
-    # Step 9: Save results to a text file
-    open(savepath, "w") do file
-        for row in eachrow(results)
-            writedlm(file, [row.quantile row.coef row.se row.n_bootstrap row.t_5 row.t_10 row.t_90 row.t_95], "\t")  # Tab-separated values
+"""
+    rif_did_w(df, trat_var, post_var, outcome, qq, covariates)
+
+Reweighted RIF-DID estimator of Quantile Effects.
+
+Extends `rif_did` by reweighting each comparison group's empirical CDF to match
+the covariate distribution of the treated-post group (G=1, T=1). Propensity
+scores are estimated by probit.
+
+**Reweighting weights** (Bayes rule):
+
+    ω_{t′g′}(X) = (P_{t′g′} / P_{11}) × [P(T=1,G=1|X) / P(T=t′,G=g′|X)]
+
+**Reweighted counterfactual CDF:**
+
+    F^{C*}_{Y,11}(y) = F^C_{Y,10}(y) + [F^C_{Y,01}(y) − F^C_{Y,00}(y)]
+
+where F^C_{Y,t′g′}(y) = E[1{Y ≤ y} · ω_{t′g′}(X) | T=t′, G=g′].
+
+**Reweighted QITT:**
+
+    Δ*(y) = [(1 − F_{Y,11}(y)) − (1 − F^{C*}_{Y,11}(y))] / f_Y(y)
+
+Comparing Δ*(y) with the pure `rif_did` estimate reveals how much distributional
+heterogeneity is driven by compositional differences vs. structural policy effects.
+
+# Arguments
+- `df`: DataFrame with `trat_var`, `post_var`, `outcome`, and all `covariates`
+- `trat_var`: binary treatment indicator (1 = treated municipality)
+- `post_var`: binary post-reform indicator (1 = post-reform cohort)
+- `outcome`: outcome variable (e.g. standardised test score)
+- `qq`: vector of quantile probabilities in (0,1)
+- `covariates`: `Vector{Symbol}` of pre-treatment covariates for propensity score
+
+# Returns
+Same `DataFrame` structure as `rif_did`.
+
+# References
+Miguez, Araujo, Ogava & Portela (2026), Section 5.2.
+DiNardo, Fortin & Lemieux (1996). Firpo, Fortin & Lemieux (2009).
+"""
+function rif_did_w(df::DataFrame,
+                   trat_var::AbstractString,
+                   post_var::AbstractString,
+                   outcome::AbstractString,
+                   qq::AbstractVector{<:Real},
+                   covariates::Vector{Symbol} = Symbol[])
+    @assert !isempty(covariates) "rif_did_w requires covariates; use rif_did() for the unweighted version"
+
+    df = copy(df)
+    trat = df[!,Symbol(trat_var)]
+    post = df[!,Symbol(post_var)]
+
+    # Define group membership
+    df[!, :trat_post]    = ((trat .== 1.0) .& (post .== 1.0))
+    df[!, :trat_pre]     = ((trat .== 1.0) .& (post .== 0.0))
+    df[!, :control_post] = ((trat .== 0.0) .& (post .== 1.0))
+    df[!, :control_pre]  = ((trat .== 0.0) .& (post .== 0.0))
+
+    df[!, :group] = map((p, t) ->
+        p == 1 && t == 1 ? "11" :
+        p == 0 && t == 1 ? "10" :
+        p == 1 && t == 0 ? "01" :
+        p == 0 && t == 0 ? "00" : "other",
+        post, trat)
+
+    # Propensity scores via probit for each group vs. rest
+    cov_formula = sum(Term.(covariates))
+    for (col, dep) in [(:PX11, :trat_post), (:PX10, :trat_pre),
+                       (:PX01, :control_post), (:PX00, :control_pre)]
+        m = glm(Term(dep) ~ cov_formula, df, Binomial(), ProbitLink())
+        m=nothing;  GC.gc() #Added just to keep memory running smoothly
+        df[!, col] = Float64.(predict(m))
+    end
+
+    # Marginal group proportions
+    P11 = mean(df[!, :trat_post])
+    P10 = mean(df[!, :trat_pre])
+    P01 = mean(df[!, :control_post])
+    P00 = mean(df[!, :control_pre])
+
+    # Reweighting: ω_{t'g'}(X) = (P_{t'g'}/P11) * (PX11 / PX_{t'g'})
+    df[!, :ω10] = (P10/P11) .* (df[!, :PX11] ./ df[!, :PX10])
+    df[!, :ω01] = (P01/P11) .* (df[!, :PX11] ./ df[!, :PX01])
+    df[!, :ω00] = (P00/P11) .* (df[!, :PX11] ./ df[!, :PX00])
+
+    # Pre-compute masks once (they are constant across the quantile grid)
+    mask00 = df[!, :group] .== "00"
+    mask01 = df[!, :group] .== "01"
+    mask10 = df[!, :group] .== "10"
+    mask11 = df[!, :group] .== "11"
+    w00 = df[mask00, :ω00]
+    w01 = df[mask01, :ω01]
+    w10 = df[mask10, :ω10]
+
+    allY = df[!, Symbol(outcome)]
+    Y11  = df[mask11, Symbol(outcome)]
+    kd   = kde(Float64.(collect(skipmissing(allY))))
+    kd11 = kde(Float64.(collect(skipmissing(Y11))))
+
+    qs           = collect(qq)
+    quant_vals   = quantile(skipmissing(allY), qs)
+    quant_vals11 = quantile(skipmissing(Y11),  qs)
+
+    Y_col = df[!, Symbol(outcome)]
+
+    # Evaluate QE on a given quantile grid using a given KDE for denominator
+    function eval_grid(grid, kd_eval)
+        n     = length(grid)
+        did_v = zeros(n)
+        rif_v = zeros(n)
+        for (i, y) in enumerate(grid)
+            I       = Y_col .<= y
+            F00C    = wmean(I[mask00], w00)
+            F01C    = wmean(I[mask01], w01)
+            F10C    = wmean(I[mask10], w10)
+            F11_obs = mean(I[mask11])
+            F11_cf  = F10C + (F01C - F00C)
+            did_v[i] = (1 - F11_obs) - (1 - F11_cf)
+            rif_v[i] = did_v[i] / pdf(kd_eval, y)
+        end
+        return did_v, rif_v
+    end
+
+    did,   rif   = eval_grid(quant_vals,   kd)
+    did11, rif11 = eval_grid(quant_vals11, kd11)
+
+    return DataFrame(
+        percentil  = qs .* 100,
+        nota       = quant_vals,
+        DID_pct    = did,
+        density    = pdf.(Ref(kd),   quant_vals),
+        RIF_DID    = rif,
+        nota11     = quant_vals11,
+        DID_pct11  = did11,
+        RIF_DID11  = rif11,
+        density11  = pdf.(Ref(kd11), quant_vals11)
+    )
+end
+
+"""
+    rif_did_bootstrap(df, trat_string, post_string, pre_string, outcome_string,
+                      qq, bootstrap, bootstrap_reps, cluster;
+                      use_weights=false, covariates=Symbol[], sub_sample_factor=1.0)
+
+Run `rif_did` or `rif_did_w` on the full sample and optionally bootstrap it,
+appending all replications to a results DataFrame which is also saved to CSV.
+
+Set `use_weights=true` to use `rif_did_w` (requires non-empty `covariates`).
+Set `cluster` to a column name for cluster-bootstrap, or `missing` for i.i.d. bootstrap.
+"""
+function rif_did_bootstrap(
+    df::DataFrame,
+    trat_string::AbstractString,
+    post_string::AbstractString,
+    pre_string::AbstractString,
+    outcome_string::AbstractString,
+    qq::AbstractVector{<:Real},
+    bootstrap::Bool,
+    bootstrap_reps::Integer,
+    cluster::Union{AbstractString,Missing},
+    use_weights::Bool = false,
+    covariates::Vector{Symbol} = Symbol[];
+    sub_sample_factor::Float64 = 1.0)
+
+    results = DataFrame()
+
+    df2 = df[.!ismissing.(df[!,Symbol(trat_string)]) .&
+             .!ismissing.(df[!,Symbol(pre_string)])   .&
+             .!ismissing.(df[!,Symbol(post_string)])  .&
+             .!ismissing.(df[!,Symbol(outcome_string)]), :]
+
+    df3 = if sub_sample_factor ≈ 1.0
+        df2
+    else
+        idx = sample(1:nrow(df2), Int(floor(nrow(df2)*sub_sample_factor)), replace=false)
+        df2[idx, :]
+    end
+
+    # Full-sample estimate (b_rep = 0)
+    full = if use_weights
+        rif_did_w(df3, trat_string, post_string, outcome_string, qq, covariates)
+    else
+        rif_did(df3, trat_string, post_string, pre_string, outcome_string, qq)
+    end
+    full[!, :b_rep] = fill(0, nrow(full))
+    append!(results, full)
+
+    if bootstrap
+        clusters = cluster === missing ? missing : unique(df3[!, Symbol(cluster)])
+        n = nrow(df3)
+
+        for rep in 1:bootstrap_reps
+            println("Bootstrap rep $rep")
+            boot_df3 = if cluster === missing
+                df3[rand(1:n, n), :]
+            else
+                draw = rand(1:length(clusters), length(clusters))
+                sel  = Set(clusters[draw])
+                df3[in.(df3[!, Symbol(cluster)], Ref(sel)), :]
+            end
+            if !(sub_sample_factor ≈ 1.0)
+                idx = sample(1:nrow(boot_df3), Int(floor(nrow(boot_df3)*sub_sample_factor)), replace=false)
+                boot_df3 = boot_df3[idx, :]
+            end
+
+            tmp = if use_weights
+                rif_did_w(boot_df3, trat_string, post_string, outcome_string, qq, covariates)
+            else
+                rif_did(boot_df3, trat_string, post_string, pre_string, outcome_string, qq)
+            end
+            tmp[!, :b_rep] .= rep
+            append!(results, tmp)
         end
     end
-    # Setp 10: Save the t-Statistics
-    # Step 10: Save the t-statistics
-    path_t = "boot_results_quantile_$(quantile_value)_nboot_$(n_boot)_t_statistics.txt"
-    open(path_t, "w") do file
-        writedlm(file, t_matrix, "\t")
-    end
 
+    fname = "RIF_DID_results_bootstrap$(bootstrap_reps)_" *
+            (use_weights ? "weighted" : "unweighted") *
+            (cluster !== missing ? "_cluster$(cluster)" : "") * ".csv"
+    CSV.write(fname, results)
+    println("Results saved to ", fname)
+    return results
+end
 
-    return(coef_final,se_final,quantile_value,n_boot)
-end
-end
+end  # module QuantileEffects
