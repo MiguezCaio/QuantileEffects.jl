@@ -506,7 +506,7 @@ function cic(df,
     bootstrap_reps::Integer,
     cluster::Union{AbstractString,Missing};
     sub_sample_factor::Float64 = 1.0)
-@assert 0.0 < sub_sample_factor ≤ 1.0 "sub_sample_factor must be in (0,1]"
+    @assert 0.0 < sub_sample_factor ≤ 1.0 "sub_sample_factor must be in (0,1]"
     # INFORMAÇÕES GERAIS
     # Este programa calcula quatro conjuntos de estimativas CIC
     # (para independência condicional contínua, discreta, limite inferior e limite superior)
@@ -790,5 +790,108 @@ function cic(df,
     return data
 end
 export cic
+####Now add the RIF part
 
+function calculate_rif(df,outcome_var, quantile_value)
+    q_value = quantile(skipmissing(df[!,Symbol(outcome_var)]), quantile_value)
+    kde_est = kde(collect(skipmissing(df[!,Symbol(outcome_var)])))  # Kernel density estimate
+    density_at_q = pdf(kde_est, q_value)
+    indicator = df[!,Symbol(outcome_var)] .< q_value
+    rif = q_value .+ ((quantile_value .- indicator) ./ density_at_q)
+    return rif
+end
+
+
+function RIF_DID(df,quantile_value,n_boot,cluster)
+    # Step 1: Create a customized file path based on quantile and n_bootstrap
+    savepath = "boot_results_quantile_$(quantile_value)_nboot_$(n_boot).txt"
+    
+    # Step 2: Check if the file already exists
+    if isfile(savepath)
+        println("File for quantile $quantile_value and n_boot $n_boot already exists. Exiting.")
+        return nothing  # Exit the function early if file exists
+    end
+    b_matrix = []
+    t_matrix=[]
+    rif=calculate_rif(df,quantile_value)
+    df.rif=rif 
+    # Use the flexible cluster variable here
+    model = reg(df,
+     @formula(rif ~ a_trat_post + a_trat_phasein + a_trat + a_sexo + a_raca + a_mora_mae + a_escolaridade_mae + a_mora_pai + a_escolaridade_pai + a_inse + p_sexo + p_raca + p_experiencia + p_escolaridade + p_num_escolas + fe(coorte) + fe(municipio)+ fe(ano))
+    , Vcov.cluster(Symbol(cluster)))
+    # Get unique clusters and their sizes
+    clusters = unique(df[!, Symbol(cluster)])
+
+    for i in 1:n_boot
+        # Sample clusters with replacement
+        indices = rand(1:length(clusters), length(clusters))
+        aa = clusters[indices]
+        
+        #boot_df = DataFrame()
+        #for j in 1:length(aa)
+            # Select data for the current cluster using flexible cluster column
+        #    cc = df[df[!, Symbol(cluster)] .== aa[j], :]
+            
+            # Add the data for this cluster to the bootstrap dataset
+        #    boot_df = vcat(boot_df, cc)
+        #end
+        # Create a bootstrap sample based on the sampled clusters
+        sampled_clusters_set = Set(aa)
+        boot_df = df[in.(df[!, Symbol(cluster)], Ref(sampled_clusters_set)), :]
+        #boot_df = df[in(df[!, Symbol(cluster)], aa), :]
+        # Calculate the RIF for the bootstrapped sample
+        boot_df.rif = calculate_rif(boot_df, quantile_value)
+        model1 = reg(boot_df, @formula(rif ~ a_trat_post + a_trat_phasein + a_trat + a_sexo + a_raca + a_mora_mae + a_escolaridade_mae + a_mora_pai + a_escolaridade_pai + a_inse + p_sexo + p_raca + p_experiencia + p_escolaridade + p_num_escolas + fe(coorte) + fe(municipio)+ fe(ano))
+        , Vcov.cluster(Symbol(cluster)))
+        # Extract coefficients and append to the matrix
+        println(i)
+        push!(b_matrix, coef(model1))
+        push!(t_matrix,(coef(model1)[1,1]-coef(model)[1,1])/sqrt(vcov(model1)[1,1]))
+    end
+    # Step 3: Convert list of coefficients into a matrix
+    b_matrix = reduce(hcat, b_matrix)
+
+    # Step 4: Calculate the variance-covariance matrix of the coefficients
+    vce_matrix = cov(b_matrix, dims=2)
+
+    # Step 5: save the coef and bootstrapped standard error
+    coef_final=coef(model)[1,1]
+    se_final=sqrt(vce_matrix[1,1])
+    t_sorted=sort(t_matrix)
+
+
+    # Correcting rounding for percentiles
+    t_5 = t_sorted[ceil(Int, n_boot * 0.05)]
+    t_10 = t_sorted[ceil(Int, n_boot * 0.10)]
+    t_90 = t_sorted[floor(Int, n_boot * 0.90)]
+    t_95 = t_sorted[floor(Int, n_boot * 0.95)]
+
+    # Step 7: Prepare results for saving
+    results = DataFrame(
+        coef = [coef_final],
+        se = [se_final],
+        quantile = [quantile_value],
+        n_bootstrap = [n_boot],
+        t_5 = t_5,
+        t_10 = t_10,
+        t_90 = t_90,
+        t_95 = t_95
+    )
+
+    # Step 9: Save results to a text file
+    open(savepath, "w") do file
+        for row in eachrow(results)
+            writedlm(file, [row.quantile row.coef row.se row.n_bootstrap row.t_5 row.t_10 row.t_90 row.t_95], "\t")  # Tab-separated values
+        end
+    end
+    # Setp 10: Save the t-Statistics
+    # Step 10: Save the t-statistics
+    path_t = "boot_results_quantile_$(quantile_value)_nboot_$(n_boot)_t_statistics.txt"
+    open(path_t, "w") do file
+        writedlm(file, t_matrix, "\t")
+    end
+
+
+    return(coef_final,se_final,quantile_value,n_boot)
+end
 end
