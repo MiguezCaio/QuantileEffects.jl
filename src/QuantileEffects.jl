@@ -3,7 +3,6 @@ module QuantileEffects
 using Distributions
 using DataFrames, Random, StatsBase, KernelDensity, FixedEffectModels,Statistics,CategoricalArrays,JSON
 using LinearAlgebra
-using Pkg
 export DataFrame
 
 function cdf_empirical(y, P, YS)

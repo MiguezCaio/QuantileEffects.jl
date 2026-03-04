@@ -2,5 +2,7 @@
 *.jl.cov
 *.jl.mem
 *.json
+# Manifest is version-specific; let each Julia version resolve its own
+Manifest.toml
 # Athey & Imbens original MATLAB replication code and local development files
 Other/
