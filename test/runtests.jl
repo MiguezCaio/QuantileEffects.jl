@@ -59,3 +59,59 @@ test_rif=calculate_rif(df,outcome,0.5)
         end
     end                         # no NaNs/Infs
 end
+
+@testset "RIF smoke-tests" begin
+    col = collect(skipmissing(df[!, Symbol(outcome)]))
+
+    @testset "calculate_rif" begin
+        # Output length matches number of rows in df
+        rif50 = calculate_rif(df, outcome, 0.5)
+        @test length(rif50) == nrow(df)
+
+        # All values are finite
+        @test all(isfinite, rif50)
+
+        # E[RIF(Y; q_τ)] = q_τ (defining property of RIF)
+        @test isapprox(mean(rif50), quantile(col, 0.5), rtol=0.02)
+
+        # Works for a different quantile
+        rif90 = calculate_rif(df, outcome, 0.9)
+        @test length(rif90) == nrow(df)
+        @test all(isfinite, rif90)
+        @test isapprox(mean(rif90), quantile(col, 0.9), rtol=0.02)
+    end
+
+    @testset "rif_did – unconditional and 1|1 distributions" begin
+        qq_rif = collect(0.1:0.1:0.9)
+        res = rif_did(df, trat_var, post_var, pre_var, outcome, qq_rif)
+
+        # Must return a DataFrame with the right number of rows
+        @test res isa DataFrame
+        @test nrow(res) == length(qq_rif)
+
+        # All expected columns must be present
+        for col_name in [:percentil, :nota, :DID_pct, :density, :RIF_DID,
+                         :nota11, :DID_pct11, :density11, :RIF_DID11]
+            @test col_name in propertynames(res)
+        end
+
+        # percentil column must equal qq * 100
+        @test res[!, :percentil] ≈ qq_rif .* 100
+
+        # Numeric columns must be finite
+        for col_name in [:nota, :DID_pct, :density, :RIF_DID,
+                         :nota11, :DID_pct11, :density11, :RIF_DID11]
+            @test all(isfinite, res[!, col_name])
+        end
+
+        # Densities must be strictly positive
+        @test all(>(0), res[!, :density])
+        @test all(>(0), res[!, :density11])
+
+        # Unconditional quantiles (nota) are pooled over all four groups,
+        # so they should differ from the 1|1 quantiles (nota11) in general
+        # (they are not guaranteed equal; just check they are both monotone)
+        @test issorted(res[!, :nota])
+        @test issorted(res[!, :nota11])
+    end
+end

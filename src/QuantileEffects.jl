@@ -345,8 +345,19 @@ end
 """
     make_se_estimator(Y00, Y01, Y10, Y11; cc=1e-8)
 
-Precompute everything you need for the standard‐error function,
-and return a function `se(q)` that only loops over `q`.
+Precompute everything you need for the analytical standard‐error function,
+and return a closure `se(q)` that evaluates the SE at quantile `q`.
+
+The analytical variance formula follows the delta-method derivation in
+**Athey & Imbens (2006)**, Appendix, specifically equations (A.5)–(A.8)
+for the continuous CIC estimator.  Four independent variance components
+are summed: V₀₀, V₀₁, V₁₀, V₁₁ (one per 2×2 cell), and the SE is
+`sqrt(V₀₀ + V₀₁ + V₁₀ + V₁₁)`.
+
+!!! warning "CIC analytical SE only"
+    These standard errors are valid for the **continuous CIC** quantile
+    estimator.  They are **not** appropriate for the discrete, lower-bound,
+    or upper-bound CIC estimators, nor for the RIF-DID estimators.
 """
 function make_se_estimator(
     Y00::AbstractVector,
@@ -490,6 +501,8 @@ function cic(df,
    se = [ zeros(size(e)) for e in est ]
 
     if standard_error == 1
+        # Analytical standard errors follow the delta-method in Athey & Imbens (2006),
+        # Appendix equations (A.5)-(A.8), applied to the continuous CIC estimator.
         println("running the analytical calculations")
         F00 = cumsum(f00) / maximum(cumsum(f00))
         F01 = cumsum(f01) / maximum(cumsum(f01))
@@ -718,9 +731,14 @@ end
 
 Pure RIF-DID estimator of Quantile Effects (no reweighting).
 
+!!! note "2×2 DID only"
+    This function is implemented for the canonical 2×2 DiD design: one treated
+    group, one control group, one pre-period, one post-period.  It does not
+    handle staggered adoption or multiple treatment groups.
+
 **Identifying assumption** — distributional parallel trends: absent the reform,
 the CDF of outcomes would have evolved identically in treated and control
-municipalities at every percentile. The counterfactual CDF is:
+groups at every percentile. The counterfactual CDF is:
 
     F_{Y^N,11}(y) = F_{Y,10}(y) + [F_{Y,01}(y) − F_{Y,00}(y)]
 
@@ -730,19 +748,38 @@ The Quantile Effect at evaluation point y is:
 
 Dividing by the density converts the CDF-scale DiD into units of the outcome.
 
+**Two evaluation grids are returned:**
+
+1. **Unconditional distribution** (`nota`, `RIF_DID`, …): quantiles are computed
+   from the pooled outcome distribution across all four groups (00, 01, 10, 11).
+   This evaluates the policy effect at the quantiles of the overall pre/post
+   outcome distribution, following the RIF regression interpretation of
+   Firpo, Fortin & Lemieux (2009).
+
+2. **1|1 distribution** (`nota11`, `RIF_DID11`, …): quantiles are computed from
+   the treated-post (G=1, T=1) outcome distribution alone.  This evaluates the
+   same policy effect at quantiles that are directly observable in the treated
+   group after the reform, making the results easier to compare with quantile
+   treatment-on-the-treated estimates.
+
+Standard errors are **not** computed here; use `rif_did_bootstrap` for
+cluster-robust bootstrap standard errors.
+
 # Arguments
 - `df`: DataFrame with columns `trat_var`, `post_var`, `pre_var`, `outcome`
-- `trat_var`: binary treatment indicator (1 = treated municipality)
-- `post_var`: binary post-reform indicator (1 = post-reform cohort)
-- `pre_var`: binary pre-reform indicator (1 = pre-reform cohort)
+- `trat_var`: binary treatment indicator (1 = treated group)
+- `post_var`: binary post-period indicator (1 = post-reform observation)
+- `pre_var`: binary pre-period indicator (1 = pre-reform observation)
 - `outcome`: outcome variable (e.g. standardised test score)
 - `qq`: vector of quantile probabilities in (0,1)
 - `sub_sample_factor`: fraction of rows to use (default 1.0 = full sample)
 
 # Returns
-`DataFrame` with columns `percentil`, `nota`, `DID_pct`, `density`, `RIF_DID`
-(evaluated at pooled quantiles) and `nota11`, `DID_pct11`, `density11`, `RIF_DID11`
-(evaluated at treated-post quantiles).
+`DataFrame` with columns:
+- `percentil`, `nota`, `DID_pct`, `density`, `RIF_DID`: evaluated at quantiles
+  of the **unconditional (pooled)** outcome distribution.
+- `nota11`, `DID_pct11`, `density11`, `RIF_DID11`: evaluated at quantiles of
+  the **1|1 (treated-post)** outcome distribution.
 
 # References
 Miguez, Araujo, Ogava & Portela (2026), Section 5.1.
@@ -817,6 +854,11 @@ Reweighted RIF-DID estimator of Quantile Effects.
 Extends `rif_did` by reweighting each comparison group's empirical CDF to match
 the covariate distribution of the treated-post group (G=1, T=1). Propensity
 scores are estimated by probit.
+
+!!! note "2×2 DID only"
+    This function is implemented for the canonical 2×2 DiD design: one treated
+    group, one control group, one pre-period, one post-period.  It does not
+    handle staggered adoption or multiple treatment groups.
 
 **Reweighting weights** (Bayes rule):
 
@@ -959,6 +1001,10 @@ appending all replications to a results DataFrame which is also saved to CSV.
 
 Set `use_weights=true` to use `rif_did_w` (requires non-empty `covariates`).
 Set `cluster` to a column name for cluster-bootstrap, or `missing` for i.i.d. bootstrap.
+
+!!! note "2×2 DID only"
+    Inherits the same restriction as `rif_did` / `rif_did_w`: designed for the
+    canonical 2×2 DiD design (one treated group, one control group, two periods).
 """
 function rif_did_bootstrap(
     df::DataFrame,
