@@ -33,7 +33,9 @@ test_rif=calculate_rif(df,outcome,0.5)
      # 4) No NaN/Inf and correct dimensions
     for key in ["est","boot_est","se","se_boot"]
         arr = result[key]
-        arr_vec = [ x for mat in arr for x in mat ]
+        # "est" and "se" are Vector{Matrix}, so iterate mat→elements.
+        # "boot_est" (3-D) and "se_boot" (2-D) are plain numeric arrays; just flatten.
+        arr_vec = arr isa AbstractVector ? [x for mat in arr for x in mat] : vec(arr)
         @testset "checking $key" begin
             # a) all entries finite (no NaN, no Inf)
             @test all(isfinite, arr_vec)
